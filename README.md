@@ -34,3 +34,11 @@ See [architecture](docs/ARCHITECTURE.md), [API](docs/API.md), and [daily progres
 ## Browser smoke check
 
 With both servers running, run `npx playwright install chromium`, then `npm run test:browser`. Set CHROMIUM_PATH when using a system browser. This checks mock adaptation, all three field values, failure recovery, and mobile overflow. Browser execution was blocked by operating-system permissions in the initial Work environment; it is not recorded as passed.
+
+## Develop in VS Code
+
+Open the repository root, install the recommended extensions you want, and run `npm ci`. Copy `.env.example` to `.env`. Use Terminal → Run Task → AuraGen: develop to start frontend and backend in parallel. Open http://localhost:3000. Use the typecheck, test and build tasks for validation.
+
+For backend breakpoints, stop the backend task and launch “AuraGen: debug backend” from Run and Debug. Start the frontend task before launching “AuraGen: debug frontend in Edge”. Keep API keys only in ignored environment files.
+
+The VS Code configuration is portable project setup, not evidence that the app has been opened on your personal computer.
