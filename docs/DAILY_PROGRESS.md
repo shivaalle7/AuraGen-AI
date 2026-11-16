@@ -4,7 +4,7 @@
 
 Prepared early on November 16, 2026 (India time). No commits are backdated.
 
-Status: foundation implemented locally; publishing and browser verification pending. Official assignment comparison remains pending receipt of the document.
+Status: foundation published in PR #2; review and browser verification pending. Official assignment comparison remains pending receipt of the document.
 
 ### Repository baseline
 
@@ -38,6 +38,14 @@ Team leader: review API, schemas, CI, environment setup and architecture. Fronte
 
 ### Pending
 
-Official project document, authenticated GitHub connection, approval to publish this branch/create develop and PR, and a browser smoke run in a permitted environment. No automatic progression to Day 2.
+Official project document, a browser smoke run in a permitted environment, and pull-request review. GitHub is connected and publishing was approved. No automatic progression to Day 2.
 
 Next planned Day 2: expand financial form and validation with the teammate; define API input/output contracts and backend error handling with the leader.
+
+### Publishing update — November 16, 2026
+
+- Created develop from main at 1f542e4.
+- Published chore/day-1-foundation via the connected GitHub app.
+- Foundation commit: 75cd6e76eb668398b357e097b6845d6450260c24. Source tree matches locally tested tree 627832c6c34bf6f245f48afd3d3b67204895c00f; local preparation commit d2e8b34 has the same content.
+- PR: https://github.com/shivaalle7/AuraGen-AI/pull/2 targeting develop; open and mergeable at verification.
+- GitHub Actions started; CI result will be checked separately. No merge or deployment performed.
