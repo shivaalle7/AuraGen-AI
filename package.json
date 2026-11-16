@@ -1,0 +1,22 @@
+{
+  "name": "auragen",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @auragen/web",
+    "dev:api": "npm run dev -w @auragen/api",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:browser": "node scripts/smoke.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "playwright": "^1.65.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}
