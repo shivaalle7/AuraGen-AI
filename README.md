@@ -23,9 +23,9 @@ npm test
 npm run build
 ```
 
-## Current functionality
+## Current functionality (Day 2)
 
-Day 1 foundation: Next.js financial form, Express API, Socket.IO readiness event, strict shared Zod layout contract, manual mock simplification, browser-held form values, failure message, and CI configuration. No real financial submission is performed. Automatic telemetry, cognitive scoring, live LangChain/OpenAI generation, and deployment are pending.
+Next.js financial form with shared client/server validation, accessible field errors, first-invalid-field focus, bounded numeric inputs, validation API, consistent JSON errors, strict generation context, Socket.IO readiness event, manual mock simplification, browser-held state and CI configuration. Validation sends form values transiently to the API; the app does not store them or send them to a model. No loan application is submitted. Automatic telemetry, cognitive scoring, live LangChain/OpenAI generation, and deployment are pending.
 
 No generated JavaScript is executed. JSON describes only allowed input components. No API key is needed for mock mode. Never place credentials in NEXT_PUBLIC variables.
 

@@ -5,3 +5,7 @@ header { margin-bottom: 40px; } h1 { font-size: clamp(2rem, 5vw, 3.5rem); margin
 p { color: #aebed3; line-height: 1.6; } .card { background: #142238; border: 1px solid #31435e; border-radius: 20px; padding: 28px; }
 label { display: block; margin: 24px 0; } input { display: block; width: 100%; box-sizing: border-box; padding: 13px; margin: 8px 0; background: #0b1220; border: 1px solid #7185a0; border-radius: 8px; color: white; font: inherit; }
 small { color: #b9c8dc; } button { background: #82baff; color: #081a30; padding: 14px 22px; border: 0; border-radius: 10px; font-weight: bold; cursor: pointer; } button:disabled { opacity: .6; } :focus-visible { outline: 3px solid #b0d5ff; outline-offset: 4px; }
+
+.field { margin: 24px 0; } .field label { margin: 0; }
+.field-error { color: #ffb5a7; margin: 8px 0; } input[aria-invalid="true"] { border-color: #ffb5a7; }
+button:disabled { cursor: wait; }
