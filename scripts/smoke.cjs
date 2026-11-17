@@ -6,9 +6,15 @@ const { chromium } = require('playwright');
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://localhost:3000');
+    await page.getByRole('button', {name: 'Check my details'}).click();
+    await page.getByRole('status').filter({hasText: 'Please correct'}).waitFor();
+    if (await page.locator('[aria-invalid="true"]').count() !== 3) throw Error('Missing client errors');
+    if (await page.locator('#fullName').evaluate(el => el !== document.activeElement)) throw Error('First invalid field not focused');
     await page.getByLabel('Applicant name').fill('Demo User');
     await page.getByLabel('Monthly income (₹)').fill('25000');
     await page.getByLabel('Requested loan (₹)').fill('100000');
+    await page.getByRole('button', {name: 'Check my details'}).click();
+    await page.getByRole('status').filter({hasText: 'Form validated'}).waitFor();
     await page.getByRole('button', {name: 'Try a simpler layout'}).click();
     await page.getByRole('status').filter({hasText: 'Mock layout applied'}).waitFor();
     for (const [id, value] of [['fullName','Demo User'], ['monthlyIncome','25000'], ['loanAmount','100000']]) {
