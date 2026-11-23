@@ -16,10 +16,20 @@ Open [localhost:3000](http://localhost:3000/). To see validation metadata over W
 ## Demo
 
 1. Enter `-10` for **Monthly income (INR)** and click **Submit demo application** three times within 30 seconds.
-2. Click **Open guided section** to see the tailored step. Edit the income and return to standard view to confirm the edit carries over.
+2. Click **Open guided section** to see the tailored step. Correct the income and click **Continue**. The guide moves to any remaining invalid field, then returns to standard view with your corrections.
 3. In development, open [the timeout demo](http://localhost:3000/?layoutDemo=timeout) and repeat the same steps to see the built-in guide open at Finances.
 
-The layout uses simulated generation by default. The optional live provider reads `OPENAI_API_KEY` and `AURAGEN_OPENAI_MODEL` from `.env.local`. Form answers remain in the browser. The server receives the affected field ID, error code, and repeat count, and validates that the layout contains each required field exactly once. Live provider verification is pending.
+The layout uses simulated generation by default and makes no paid calls. To run a small live test, add these settings to the Git-ignored `.env.local` file and restart Next.js.
+
+```dotenv
+OPENAI_API_KEY=your_key_here
+AURAGEN_OPENAI_MODEL=gpt-6-luna
+AURAGEN_OPENAI_MAX_CALLS=5
+```
+
+Each server process allows up to five live attempts with this configuration. Failed and timed-out requests count toward the limit. After the limit, AuraGen uses simulated layouts. The counter resets on restart or during development reloads and applies separately to each server process. Set the limit to `0` to disable paid calls.
+
+Form answers stay in the browser. The server receives the affected field ID, error code, and repeat count. The layout validator checks that every field appears exactly once.
 
 ## Checks
 
