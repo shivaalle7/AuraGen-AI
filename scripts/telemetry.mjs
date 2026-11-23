@@ -4,9 +4,11 @@ const port = 3001;
 const origins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
 const fieldIds = new Set(["name", "email", "employment", "income", "amount", "purpose"]);
 const fieldErrorCodes = new Map([
+  ["name", "invalid_name"],
   ["email", "invalid_email"],
   ["income", "invalid_income"],
   ["amount", "invalid_amount"],
+  ["purpose", "missing_other_purpose"],
 ]);
 
 const server = new WebSocketServer({

@@ -15,9 +15,13 @@ Open [localhost:3000](http://localhost:3000/). To see validation metadata over W
 
 ## Demo
 
-1. Enter `-10` for **Monthly income (INR)** and click **Submit demo application** three times within 30 seconds.
-2. Click **Open guided section** to see the tailored step. Correct the income and click **Continue**. The guide moves to any remaining invalid field, then returns to standard view with your corrections.
+For a no-cost rehearsal, open the [simulated demo](http://localhost:3000/?layoutDemo=simulated). In development, this link always uses fresh simulated guides, even when a live API key or cached AI guide is available.
+
+1. Click **Load sample application** in the empty form, then click **Submit demo application** three times within 30 seconds.
+2. Click **Open guided section** to see the tailored step. Correct the income to ₹10,000 and click **Continue**. Correct the loan amount to ₹1,000 and click **Continue** again to return to standard view with both corrections.
 3. In development, open [the timeout demo](http://localhost:3000/?layoutDemo=timeout) and repeat the same steps to see the built-in guide open at Finances.
+
+Open **Adaptation diagnostics** to see the latest trigger, layout source, and elapsed time from accepting the offer until the layout is ready. The panel compares that time with the two-second target. It keeps the latest result in the browser tab.
 
 The layout uses simulated generation by default and makes no paid calls. To run a small live test, add these settings to the Git-ignored `.env.local` file and restart Next.js.
 
@@ -27,7 +31,7 @@ AURAGEN_OPENAI_MODEL=gpt-6-luna
 AURAGEN_OPENAI_MAX_CALLS=5
 ```
 
-Each server process allows up to five live attempts with this configuration. Failed and timed-out requests count toward the limit. After the limit, AuraGen uses simulated layouts. The counter resets on restart or during development reloads and applies separately to each server process. Set the limit to `0` to disable paid calls.
+Each server process allows up to five live attempts with this configuration. Failed and timed-out requests count toward the limit. AuraGen caches validated AI layouts by field and error for the lifetime of the server process. A repeat can reuse the cached guide without spending an attempt. Once the limit is reached, uncached cases use simulated layouts. The counter resets on restart or during development reloads and applies separately to each server process. Set the limit to `0` to disable paid calls.
 
 Form answers stay in the browser. The server receives the affected field ID, error code, and repeat count. The layout validator checks that every field appears exactly once.
 
@@ -35,5 +39,6 @@ Form answers stay in the browser. The server receives the affected field ID, err
 
 ```powershell
 npm run lint
-npx tsc --noEmit
+npm run typecheck
+npm test
 ```
