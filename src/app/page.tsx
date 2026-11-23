@@ -39,6 +39,7 @@ export default function Home() {
   const failures = useRef<{ field: Field; count: number; startedAt: number } | null>(null);
   const offeredSection = offeredField === null ? null : sectionFor(offeredField);
   const [focusTarget, setFocusTarget] = useState<{ id: string } | null>(null);
+  const [repairField, setRepairField] = useState<Field | null>(null);
   const [adaptedLayout, setAdaptedLayout] = useState<LayoutStep[] | null>(null);
   const [layoutSource, setLayoutSource] = useState<"simulated" | "model" | "fallback" | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -55,7 +56,9 @@ export default function Home() {
   function changeView() {
     cancelLayoutRequest();
     setLayoutSource(null);
-    if (adaptedLayout) {
+    setRepairField(null);
+    if (!guided) setSubmitted(false);
+    if (repairField !== null) {
       setAdaptedLayout(null);
       setStep(0);
     }
@@ -115,7 +118,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fieldId, errorCode, repeatCount }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2500)]),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(demoTimeout ? 2500 : 10000)]),
       });
       if (response.ok) {
         const data = await response.json();
@@ -131,6 +134,8 @@ export default function Home() {
     if (request.current !== controller || controller.signal.aborted) return;
     cancelLayoutRequest();
     setAdaptedLayout(layout);
+    setRepairField(fieldId);
+    setSubmitted(false);
     setLayoutSource(source);
     setGuided(true);
     setOfferedField(null);
@@ -153,15 +158,18 @@ export default function Home() {
     event.preventDefault();
     if (request.current) return;
     const continuing = guided && !lastStep;
-    const checkedFields = continuing ? activeSections[step].fields : allFields;
+    const checkedFields = continuing && repairField === null ? activeSections[step].fields : allFields;
     const nextErrors: Errors = {};
     for (const field of checkedFields) nextErrors[field] = validateField(field, answers[field]);
     setErrors((previous) => ({ ...previous, ...nextErrors }));
 
-    const firstError = checkedFields.find((field) => nextErrors[field]);
+    const firstError = repairField !== null && nextErrors[repairField]
+      ? repairField
+      : checkedFields.find((field) => nextErrors[field]);
     if (firstError) {
       setSubmitted(false);
       if (guided) {
+        if (repairField !== null) setRepairField(firstError);
         setStep(sectionFor(firstError, activeSections));
         setFocusTarget({ id: firstError });
       } else {
@@ -177,10 +185,16 @@ export default function Home() {
 
     failures.current = null;
     setOfferedField(null);
+    if (repairField !== null) {
+      changeView();
+      setFocusTarget({ id: repairField });
+      return;
+    }
     if (continuing) {
       goToStep(step + 1);
       return;
     }
+    if (guided) changeView();
     setSubmitted(true);
   }
 
@@ -220,7 +234,7 @@ export default function Home() {
               {layoutSource === "fallback" ? "Using the built-in guide." : layoutSource === "model" ? "AI-generated guide." : "Simulated adaptive guide."}
             </p>
           )}
-          {guided && (
+          {guided && repairField === null && (
             <ol aria-label="Application steps" className="mt-6 space-y-2">
               {activeSections.map((section, index) => (
                 <li key={section.fields.join(",")} aria-current={index === step ? "step" : undefined}
@@ -275,9 +289,9 @@ export default function Home() {
           })}
 
           <div className="flex flex-wrap items-center justify-end gap-3">
-            {guided && step > 0 && <button type="button" onClick={() => goToStep(step - 1)} className={secondary}>Back</button>}
+            {guided && repairField === null && step > 0 && <button type="button" onClick={() => goToStep(step - 1)} className={secondary}>Back</button>}
             <button type="submit" className={button + " bg-teal-800 text-white hover:bg-teal-900"}>
-              {guided && !lastStep ? "Continue" : "Submit demo application"}
+              {repairField !== null || (guided && !lastStep) ? "Continue" : "Submit demo application"}
             </button>
           </div>
           <div role="status">

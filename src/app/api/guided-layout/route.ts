@@ -7,6 +7,8 @@ const errorCodes: Partial<Record<Field, string>> = {
   amount: "invalid_amount",
 };
 
+let liveAttempts = 0;
+
 const schema = {
   type: "object",
   additionalProperties: false,
@@ -46,31 +48,42 @@ export async function POST(request: Request) {
 
     if (process.env.NODE_ENV === "development" && new URL(request.url).searchParams.get("demo") === "timeout") {
       await delay(3500, undefined, { signal: request.signal });
+      return Response.json({ error: "Demo timeout" }, { status: 504 });
     }
 
     const fieldId: Field = event.fieldId;
     const key = process.env.OPENAI_API_KEY;
     const model = process.env.AURAGEN_OPENAI_MODEL;
     let result: unknown;
-    if (key && model) {
+    const maxLiveCalls = Number(process.env.AURAGEN_OPENAI_MAX_CALLS ?? "0");
+    const useLiveModel = Boolean(key && model) && Number.isSafeInteger(maxLiveCalls) &&
+      maxLiveCalls > 0 && liveAttempts < maxLiveCalls;
+    if (useLiveModel) {
+      // Reserve an attempt before the request so concurrent requests share the same limit.
+      liveAttempts += 1;
       const response = await fetch("https://api.openai.com/v1/responses", {
         method: "POST",
         headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-        signal: AbortSignal.any([request.signal, AbortSignal.timeout(2200)]),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(8000)]),
         body: JSON.stringify({
           model,
           store: false,
-          max_output_tokens: 700,
+          max_output_tokens: 450,
+          ...(model === "gpt-6-luna" ? { reasoning: { effort: "none" } } : {}),
           instructions: "Create guided steps for a demo loan form. Put the target field alone in a step. Include all fields exactly once. Use short plain-text titles (60 chars max) and practical descriptions (200 chars max). Only explain what to enter. Never give lending advice or ask for extra information. Income must be zero or more. Loan amount must be positive. Both are INR.",
           input: JSON.stringify({ fieldId, errorCode: event.errorCode, repeatCount: event.repeatCount, fields }),
           text: { format: { type: "json_schema", name: "guided_layout", strict: true, schema } },
         }),
       });
-      if (!response.ok) return Response.json({ error: "Layout unavailable" }, { status: 502 });
+      if (!response.ok) {
+        console.warn("AuraGen live layout provider returned HTTP", response.status);
+        return Response.json({ error: "Layout unavailable" }, { status: 502 });
+      }
       const data = await response.json();
       const output = data.output?.find((item: { type: string }) => item.type === "message")
         ?.content?.find((item: { type: string }) => item.type === "output_text");
       if (data.status !== "completed" || typeof output?.text !== "string") {
+        console.warn("AuraGen live layout did not return a completed JSON response.");
         return Response.json({ error: "Layout unavailable" }, { status: 502 });
       }
       result = JSON.parse(output.text);
@@ -94,9 +107,19 @@ export async function POST(request: Request) {
     }
 
     const steps = parseLayout(result, fieldId);
-    if (!steps) return Response.json({ error: "Layout unavailable" }, { status: 502 });
-    return Response.json({ steps, source: key && model ? "model" : "simulated" });
-  } catch {
+    if (!steps) {
+      if (useLiveModel) console.warn("AuraGen live layout failed application validation.");
+      return Response.json({ error: "Layout unavailable" }, { status: 502 });
+    }
+    return Response.json({ steps, source: useLiveModel ? "model" : "simulated" });
+  } catch (error) {
+    if (!request.signal.aborted) {
+      if (error instanceof Error && error.name === "TimeoutError") {
+        console.warn("AuraGen live layout exceeded the provider timeout.");
+      } else {
+        console.warn("AuraGen layout request failed before a valid layout was returned.");
+      }
+    }
     return Response.json({ error: "Layout unavailable" }, { status: 502 });
   }
 }
