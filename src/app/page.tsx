@@ -43,13 +43,14 @@ export default function Home() {
   const [repairField, setRepairField] = useState<Field | null>(null);
   const [adaptedLayout, setAdaptedLayout] = useState<LayoutStep[] | null>(null);
   const [layoutSource, setLayoutSource] = useState<LayoutSource | null>(null);
-  const [lastAdaptation, setLastAdaptation] = useState<{
+  const [adaptations, setAdaptations] = useState<{
+    id: number;
     field: Field;
     errorCode: ValidationCode;
     repeatCount: number;
     source: LayoutSource;
     durationMs: number;
-  } | null>(null);
+  }[]>([]);
   const [preparing, setPreparing] = useState(false);
   const request = useRef<AbortController | null>(null);
   const activeSections = guided && adaptedLayout ? adaptedLayout : sections;
@@ -173,13 +174,11 @@ export default function Home() {
     setRepairField(firstInvalidField);
     setSubmitted(false);
     setLayoutSource(source);
-    setLastAdaptation({
-      field: fieldId,
-      errorCode,
-      repeatCount,
-      source,
-      durationMs: performance.now() - startedAt,
-    });
+    const durationMs = performance.now() - startedAt;
+    setAdaptations((previous) => [
+      { id: (previous[0]?.id ?? 0) + 1, field: fieldId, errorCode, repeatCount, source, durationMs },
+      ...previous.slice(0, 4),
+    ]);
     setGuided(true);
     setOfferedField(null);
     failures.current = null;
@@ -292,17 +291,21 @@ export default function Home() {
           )}
           <details className="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm">
             <summary className="cursor-pointer font-semibold text-slate-800">Adaptation diagnostics</summary>
-            {lastAdaptation ? (
-              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
-                <dt className="text-slate-600">Field</dt>
-                <dd>{fields[lastAdaptation.field].label}</dd>
-                <dt className="text-slate-600">Trigger</dt>
-                <dd>{lastAdaptation.repeatCount} failed attempts. {validationMessages[lastAdaptation.errorCode]}</dd>
-                <dt className="text-slate-600">Source</dt>
-                <dd>{sourceLabels[lastAdaptation.source]}</dd>
-                <dt className="text-slate-600">Layout ready</dt>
-                <dd>{(lastAdaptation.durationMs / 1000).toFixed(2)} s · {lastAdaptation.durationMs <= layoutTargetMs ? "within" : "over"} 2 s target</dd>
-              </dl>
+            {adaptations.length > 0 ? (
+              <>
+                <p className="mt-3 text-slate-600">Last {adaptations.length} of {adaptations[0].id} runs in this tab</p>
+                <ol aria-label="Recent adaptations, newest first" className="mt-2 divide-y divide-slate-200">
+                  {adaptations.map((run) => (
+                    <li key={run.id} className="py-3">
+                      <h2 className="font-semibold">{fields[run.field].label}</h2>
+                      <p className="mt-1 text-slate-600">{run.repeatCount} failed attempts. {validationMessages[run.errorCode]}</p>
+                      <p className="mt-1">
+                        {sourceLabels[run.source]} · {(run.durationMs / 1000).toFixed(2)} s · {run.durationMs <= layoutTargetMs ? "within" : "over"} 2 s target
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </>
             ) : (
               <p className="mt-3 text-slate-600">Open a suggested guide to see its trigger and timing here.</p>
             )}
