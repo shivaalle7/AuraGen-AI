@@ -1,13 +1,17 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { allFields, fields, parseLayout, sections, type Field, type LayoutStep } from "../../loan-layout";
+import { allFields, fields, parseLayout, sections, incomeMinimumHint, amountMinimumHint, type Field, type LayoutStep } from "../../loan-layout";
 
 const errorCodes: Partial<Record<Field, string>> = {
+  name: "invalid_name",
   email: "invalid_email",
   income: "invalid_income",
   amount: "invalid_amount",
+  purpose: "missing_other_purpose",
 };
 
 let liveAttempts = 0;
+// Requests can only use known field IDs and error codes, keeping the cache bounded.
+const modelLayouts = new Map<string, LayoutStep[]>();
 
 const schema = {
   type: "object",
@@ -46,7 +50,8 @@ export async function POST(request: Request) {
       return Response.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    if (process.env.NODE_ENV === "development" && new URL(request.url).searchParams.get("demo") === "timeout") {
+    const demo = process.env.NODE_ENV === "development" ? new URL(request.url).searchParams.get("demo") : null;
+    if (demo === "timeout") {
       await delay(3500, undefined, { signal: request.signal });
       return Response.json({ error: "Demo timeout" }, { status: 504 });
     }
@@ -54,9 +59,13 @@ export async function POST(request: Request) {
     const fieldId: Field = event.fieldId;
     const key = process.env.OPENAI_API_KEY;
     const model = process.env.AURAGEN_OPENAI_MODEL;
+    const cacheKey = fieldId + ":" + event.errorCode;
+    const cachedSteps = demo === "simulated" ? undefined : modelLayouts.get(cacheKey);
+    if (cachedSteps) return Response.json({ steps: cachedSteps, source: "cached" });
+
     let result: unknown;
     const maxLiveCalls = Number(process.env.AURAGEN_OPENAI_MAX_CALLS ?? "0");
-    const useLiveModel = Boolean(key && model) && Number.isSafeInteger(maxLiveCalls) &&
+    const useLiveModel = demo !== "simulated" && Boolean(key && model) && Number.isSafeInteger(maxLiveCalls) &&
       maxLiveCalls > 0 && liveAttempts < maxLiveCalls;
     if (useLiveModel) {
       // Reserve an attempt before the request so concurrent requests share the same limit.
@@ -70,8 +79,8 @@ export async function POST(request: Request) {
           store: false,
           max_output_tokens: 450,
           ...(model === "gpt-6-luna" ? { reasoning: { effort: "none" } } : {}),
-          instructions: "Create guided steps for a demo loan form. Put the target field alone in a step. Include all fields exactly once. Use short plain-text titles (60 chars max) and practical descriptions (200 chars max). Only explain what to enter. Never give lending advice or ask for extra information. Income must be zero or more. Loan amount must be positive. Both are INR.",
-          input: JSON.stringify({ fieldId, errorCode: event.errorCode, repeatCount: event.repeatCount, fields }),
+          instructions: "Create guided steps for a demo loan form. Put the target field alone in a step. Include all fields exactly once. Use short plain-text titles (60 chars max) and practical descriptions (200 chars max). Only explain what to enter. Never give lending advice or ask for extra information. Names use letters without numbers. Both amounts are in INR. If loan purpose is Other, the existing form asks for a description. " + incomeMinimumHint + " " + amountMinimumHint,
+          input: JSON.stringify({ fieldId, errorCode: event.errorCode, fields }),
           text: { format: { type: "json_schema", name: "guided_layout", strict: true, schema } },
         }),
       });
@@ -96,9 +105,9 @@ export async function POST(request: Request) {
             { ...section, fields: ids.filter((id) => id !== fieldId) },
             {
               title: fields[fieldId].label,
-              description: fieldId === "income" ? "Enter your monthly income in INR. Enter 0 if you have no monthly income."
-                : fieldId === "amount" ? "Enter the amount you want to borrow in INR. Use a value greater than zero."
-                  : "Complete this field to continue. " + (fieldId === "email" ? "Use an address such as name@example.com." : ""),
+              description: fieldId === "income" ? incomeMinimumHint
+                : fieldId === "amount" ? amountMinimumHint
+                  : fieldId === "purpose" ? "Select a purpose. If you choose Other, describe your purpose." : "Complete this field to continue. " + (fieldId === "email" ? "Use an address such as name@example.com." : ""),
               fields: [fieldId],
             },
           ];
@@ -111,6 +120,7 @@ export async function POST(request: Request) {
       if (useLiveModel) console.warn("AuraGen live layout failed application validation.");
       return Response.json({ error: "Layout unavailable" }, { status: 502 });
     }
+    if (useLiveModel) modelLayouts.set(cacheKey, steps);
     return Response.json({ steps, source: useLiveModel ? "model" : "simulated" });
   } catch (error) {
     if (!request.signal.aborted) {

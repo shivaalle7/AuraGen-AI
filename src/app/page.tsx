@@ -1,26 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useValidationTelemetry, validationMessages, type ValidationCode } from "./validation-telemetry";
+import { useValidationTelemetry } from "./validation-telemetry";
 
-import { allFields, fields, initialAnswers, parseLayout, sectionFor, sections, type Field, type LayoutStep } from "./loan-layout";
+import { allFields, fields, initialAnswers, nextCorrection, parseLayout, sectionFor, sections, validateField, validationMessages, incomeMinimumHint, amountMinimumHint, minimumMonthlyIncome, minimumLoanAmount, type Answers, type Field, type LayoutStep, type ValidationCode } from "./loan-layout";
 
 type Errors = Partial<Record<Field, ValidationCode>>;
 
-function validateField(field: Field, answer: string): ValidationCode | undefined {
-  const value = answer.trim();
-  if (!value) return "required";
-  if (field === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-    return "invalid_email";
-  }
-  if (field === "income" && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-    return "invalid_income";
-  }
-  if (field === "amount" && (!Number.isFinite(Number(value)) || Number(value) <= 0)) {
-    return "invalid_amount";
-  }
-}
+type LayoutSource = "simulated" | "model" | "cached" | "fallback";
 
+const sourceLabels: Record<LayoutSource, string> = {
+  simulated: "Simulated adaptive guide",
+  model: "AI-generated guide",
+  cached: "Cached AI-generated guide",
+  fallback: "Built-in fallback",
+};
+
+const layoutTargetMs = 2000;
 const failureThreshold = 3;
 const failureWindowMs = 30_000;
 
@@ -30,28 +26,64 @@ const secondary = button + " border border-slate-300 bg-white text-slate-800 hov
 export default function Home() {
   const sendValidationFailure = useValidationTelemetry();
   const [answers, setAnswers] = useState(initialAnswers);
+  const latestAnswers = useRef(initialAnswers);
   const [errors, setErrors] = useState<Errors>({});
+  const invalidFields = allFields.filter((field) => errors[field]);
   const [guided, setGuided] = useState(false);
   const [step, setStep] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [offeredField, setOfferedField] = useState<Field | null>(null);
   const lastEditedField = useRef<Field | null>(null);
   const failures = useRef<{ field: Field; count: number; startedAt: number } | null>(null);
-  const offeredSection = offeredField === null ? null : sectionFor(offeredField);
+  const firstOfferedError = offeredField === null
+    ? null
+    : nextCorrection(answers) ?? offeredField;
+  const offeredSection = firstOfferedError === null ? null : sectionFor(firstOfferedError);
   const [focusTarget, setFocusTarget] = useState<{ id: string } | null>(null);
   const [repairField, setRepairField] = useState<Field | null>(null);
   const [adaptedLayout, setAdaptedLayout] = useState<LayoutStep[] | null>(null);
-  const [layoutSource, setLayoutSource] = useState<"simulated" | "model" | "fallback" | null>(null);
+  const [layoutSource, setLayoutSource] = useState<LayoutSource | null>(null);
+  const [adaptations, setAdaptations] = useState<{
+    id: number;
+    field: Field;
+    errorCode: ValidationCode;
+    repeatCount: number;
+    source: LayoutSource;
+    durationMs: number;
+  }[]>([]);
   const [preparing, setPreparing] = useState(false);
   const request = useRef<AbortController | null>(null);
   const activeSections = guided && adaptedLayout ? adaptedLayout : sections;
   const lastStep = step === activeSections.length - 1;
+  const remainingCorrections = repairField === null
+    ? null
+    : allFields.filter((field) => validateField(field, answers)).length;
 
   useEffect(() => () => request.current?.abort(), []);
 
   useEffect(() => {
     if (focusTarget) document.getElementById(focusTarget.id)?.focus();
   }, [focusTarget]);
+
+  function loadSampleApplication() {
+    if (Object.values(latestAnswers.current).some(Boolean)) return;
+
+    const sample: Answers = {
+      ...initialAnswers,
+      name: "Avery Demo",
+      email: "avery@example.com",
+      employment: "Employed",
+      income: String(minimumMonthlyIncome - 1),
+      amount: String(minimumLoanAmount - 1),
+      purpose: "Home improvement",
+    };
+    latestAnswers.current = sample;
+    lastEditedField.current = null;
+    failures.current = null;
+    setAnswers(sample);
+    setErrors({});
+    setFocusTarget({ id: "income" });
+  }
 
   function changeView() {
     cancelLayoutRequest();
@@ -101,28 +133,31 @@ export default function Home() {
   async function acceptOffer() {
     if (offeredField === null || request.current) return;
     const fieldId = offeredField;
-    const errorCode = validateField(fieldId, answers[fieldId]);
+    const errorCode = validateField(fieldId, answers);
     const repeatCount = failures.current?.count ?? failureThreshold;
     if (!errorCode) return;
 
+    const startedAt = performance.now();
     const controller = new AbortController();
     request.current = controller;
     setPreparing(true);
     let layout: LayoutStep[] | null = null;
-    let source: "simulated" | "model" | "fallback" = "fallback";
+    let source: LayoutSource = "fallback";
 
     try {
-      const demoTimeout = process.env.NODE_ENV === "development" &&
-        new URLSearchParams(window.location.search).get("layoutDemo") === "timeout";
-      const response = await fetch("/api/guided-layout" + (demoTimeout ? "?demo=timeout" : ""), {
+      const demo = process.env.NODE_ENV === "development"
+        ? new URLSearchParams(window.location.search).get("layoutDemo")
+        : null;
+      const demoQuery = demo === "timeout" || demo === "simulated" ? "?demo=" + demo : "";
+      const response = await fetch("/api/guided-layout" + demoQuery, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fieldId, errorCode, repeatCount }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(demoTimeout ? 2500 : 10000)]),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(demo === "timeout" ? 2500 : 10000)]),
       });
       if (response.ok) {
         const data = await response.json();
-        if (data.source === "simulated" || data.source === "model") {
+        if (data.source === "simulated" || data.source === "model" || data.source === "cached") {
           layout = parseLayout(data, fieldId);
           if (layout) source = data.source;
         }
@@ -133,24 +168,36 @@ export default function Home() {
 
     if (request.current !== controller || controller.signal.aborted) return;
     cancelLayoutRequest();
+    const firstInvalidField = nextCorrection(latestAnswers.current);
+    if (!firstInvalidField) return;
     setAdaptedLayout(layout);
-    setRepairField(fieldId);
+    setRepairField(firstInvalidField);
     setSubmitted(false);
     setLayoutSource(source);
+    const durationMs = performance.now() - startedAt;
+    setAdaptations((previous) => [
+      { id: (previous[0]?.id ?? 0) + 1, field: fieldId, errorCode, repeatCount, source, durationMs },
+      ...previous.slice(0, 4),
+    ]);
     setGuided(true);
     setOfferedField(null);
     failures.current = null;
-    goToStep(sectionFor(fieldId, layout ?? sections));
+    goToStep(sectionFor(firstInvalidField, layout ?? sections));
   }
 
-  function update(field: Field, value: string) {
+  function update(input: keyof Answers, value: string) {
+    const field = input === "otherPurpose" ? "purpose" : input;
+    const nextAnswers = { ...latestAnswers.current, [input]: value };
+    const error = validateField(field, nextAnswers);
     lastEditedField.current = field;
-    if ((offeredField === field || failures.current?.field === field) && !validateField(field, value)) {
+    if ((offeredField === field || failures.current?.field === field) && !error) {
       failures.current = null;
       if (offeredField === field) dismissOffer();
     }
-    setAnswers((previous) => ({ ...previous, [field]: value }));
-    setErrors((previous) => ({ ...previous, [field]: previous[field] ? validateField(field, value) : undefined }));
+
+    latestAnswers.current = nextAnswers;
+    setAnswers(nextAnswers);
+    setErrors((previous) => ({ ...previous, [field]: previous[field] ? error : undefined }));
     setSubmitted(false);
   }
 
@@ -160,25 +207,25 @@ export default function Home() {
     const continuing = guided && !lastStep;
     const checkedFields = continuing && repairField === null ? activeSections[step].fields : allFields;
     const nextErrors: Errors = {};
-    for (const field of checkedFields) nextErrors[field] = validateField(field, answers[field]);
+    for (const field of checkedFields) nextErrors[field] = validateField(field, answers);
     setErrors((previous) => ({ ...previous, ...nextErrors }));
 
-    const firstError = repairField !== null && nextErrors[repairField]
-      ? repairField
+    const firstError = repairField !== null
+      ? nextCorrection(answers, repairField)
       : checkedFields.find((field) => nextErrors[field]);
     if (firstError) {
       setSubmitted(false);
       if (guided) {
         if (repairField !== null) setRepairField(firstError);
         setStep(sectionFor(firstError, activeSections));
-        setFocusTarget({ id: firstError });
+        setFocusTarget({ id: nextErrors[firstError] === "missing_other_purpose" ? "otherPurpose" : firstError });
       } else {
         // Prefer the error the user is working on when other fields are still blank.
         const editedField = lastEditedField.current;
         const target = editedField !== null && nextErrors[editedField] ? editedField : firstError;
         const errorCode = nextErrors[target];
         if (errorCode) recordValidationFailure(target, errorCode);
-        setFocusTarget({ id: target });
+        setFocusTarget({ id: errorCode === "missing_other_purpose" ? "otherPurpose" : target });
       }
       return;
     }
@@ -213,6 +260,14 @@ export default function Home() {
           <button type="button" onClick={changeView} className={secondary + " mt-5"}>
             {guided ? "Return to standard view" : "Use guided mode"}
           </button>
+          {!guided && !Object.values(answers).some(Boolean) && (
+            <div className="mt-3">
+              <button type="button" onClick={loadSampleApplication} className={secondary}>
+                Load sample application
+              </button>
+              <p className="mt-2 text-sm text-slate-600">Fills the form with fictional answers and two values to correct.</p>
+            </div>
+          )}
           {offeredSection !== null && (
             <aside aria-labelledby="guided-offer-heading" className="mt-5 rounded-xl border border-teal-200 bg-teal-50 p-4">
               <div role="status">
@@ -231,9 +286,30 @@ export default function Home() {
           )}
           {layoutSource && (
             <p role="status" className="mt-4 text-sm text-slate-600">
-              {layoutSource === "fallback" ? "Using the built-in guide." : layoutSource === "model" ? "AI-generated guide." : "Simulated adaptive guide."}
+              {layoutSource === "fallback" ? "Using the built-in guide." : sourceLabels[layoutSource] + "."}
             </p>
           )}
+          <details className="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+            <summary className="cursor-pointer font-semibold text-slate-800">Adaptation diagnostics</summary>
+            {adaptations.length > 0 ? (
+              <>
+                <p className="mt-3 text-slate-600">Last {adaptations.length} of {adaptations[0].id} runs in this tab</p>
+                <ol aria-label="Recent adaptations, newest first" className="mt-2 divide-y divide-slate-200">
+                  {adaptations.map((run) => (
+                    <li key={run.id} className="py-3">
+                      <h2 className="font-semibold">{fields[run.field].label}</h2>
+                      <p className="mt-1 text-slate-600">{run.repeatCount} failed attempts. {validationMessages[run.errorCode]}</p>
+                      <p className="mt-1">
+                        {sourceLabels[run.source]} · {(run.durationMs / 1000).toFixed(2)} s · {run.durationMs <= layoutTargetMs ? "within" : "over"} 2 s target
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </>
+            ) : (
+              <p className="mt-3 text-slate-600">Open a suggested guide to see its trigger and timing here.</p>
+            )}
+          </details>
           {guided && repairField === null && (
             <ol aria-label="Application steps" className="mt-6 space-y-2">
               {activeSections.map((section, index) => (
@@ -247,23 +323,56 @@ export default function Home() {
         </section>
 
         <form noValidate onSubmit={handleSubmit} className="space-y-7 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+          {!guided && invalidFields.length > 0 && (
+            <section aria-labelledby="error-summary-heading" className="rounded-xl border border-red-200 bg-red-50 p-4">
+              <h2 id="error-summary-heading" className="font-semibold text-red-950">
+                {invalidFields.length === 1 ? "1 field needs attention" : invalidFields.length + " fields need attention"}
+              </h2>
+              <ul className="mt-2 space-y-1 text-sm text-red-900">
+                {invalidFields.map((field) => {
+                  const error = errors[field];
+                  if (!error) return null;
+                  const otherPurpose = error === "missing_other_purpose";
+                  return (
+                    <li key={field}>
+                      <button type="button"
+                        className="rounded text-left underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+                        onClick={() => setFocusTarget({ id: otherPurpose ? "otherPurpose" : field })}>
+                        {otherPurpose ? "Other loan purpose" : fields[field].label}: {validationMessages[error]}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
           {activeSections.map((section, index) => {
             if (guided && index !== step) return null;
             return (
-              <section key={section.fields.join(",")} aria-labelledby={"section-" + index} className="border-b border-slate-200 pb-6">
+              <section key={(guided ? "guided-" : "standard-") + section.fields.join(",")}
+                aria-labelledby={"section-" + index}
+                className={"border-b border-slate-200 pb-6" + (guided ? " guided-section" : "")}>
                 <h2 id={"section-" + index} tabIndex={-1} className="text-xl font-semibold">{section.title}</h2>
-                <p className="mt-1 text-sm text-slate-600">{section.description}</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {section.fields.length === 1 && section.fields[0] === "income" ? incomeMinimumHint
+                    : section.fields.length === 1 && section.fields[0] === "amount" ? amountMinimumHint
+                      : section.description}
+                </p>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   {section.fields.map((field) => {
                     const definition = fields[field];
                     const error = errors[field];
+                    const otherPurposeError = error === "missing_other_purpose";
+                    const minimum = field === "income" ? minimumMonthlyIncome : field === "amount" ? minimumLoanAmount : undefined;
+                    const hint = field === "income" ? incomeMinimumHint : field === "amount" ? amountMinimumHint : undefined;
+                    const describedBy = error && !otherPurposeError ? field + "-error" : hint ? field + "-hint" : undefined;
                     const control = {
                       id: field,
                       name: field,
                       required: true,
                       value: answers[field],
-                      "aria-invalid": Boolean(errors[field]),
-                      "aria-describedby": errors[field] ? field + "-error" : undefined,
+                      "aria-invalid": Boolean(error && !otherPurposeError),
+                      "aria-describedby": describedBy,
                       className: "mt-1 w-full rounded-lg border border-slate-400 bg-white px-3 py-2.5 text-slate-950 focus-visible:outline-2 focus-visible:outline-teal-700 aria-invalid:border-red-700",
                     };
 
@@ -276,10 +385,26 @@ export default function Home() {
                             {definition.options.map((option) => <option key={option}>{option}</option>)}
                           </select>
                         ) : (
-                          <input {...control} type={definition.type ?? "text"}
+                          <input {...control} type={definition.type ?? "text"} min={minimum} step={minimum === undefined ? undefined : "any"}
                             onChange={(event) => update(field, event.target.value)} />
                         )}
-                        {error && <p id={field + "-error"} className="mt-1 text-sm text-red-700">{validationMessages[error]}</p>}
+                        {hint && !error && <p id={field + "-hint"} className="mt-1 text-sm text-slate-600">{hint}</p>}
+                        {error && !otherPurposeError && (
+                          <p id={field + "-error"} className="mt-1 text-sm text-red-700">{validationMessages[error]}</p>
+                        )}
+                        {field === "purpose" && answers.purpose === "Other" && (
+                          <div className="mt-4">
+                            <label htmlFor="otherPurpose" className="text-sm font-medium">Describe your loan purpose</label>
+                            <textarea id="otherPurpose" name="otherPurpose" required rows={3}
+                              className={control.className} value={answers.otherPurpose}
+                              aria-invalid={otherPurposeError}
+                              aria-describedby={otherPurposeError ? "otherPurpose-error" : undefined}
+                              onChange={(event) => update("otherPurpose", event.target.value)} />
+                            {otherPurposeError && (
+                              <p id="otherPurpose-error" className="mt-1 text-sm text-red-700">{validationMessages.missing_other_purpose}</p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -289,6 +414,15 @@ export default function Home() {
           })}
 
           <div className="flex flex-wrap items-center justify-end gap-3">
+            {remainingCorrections !== null && (
+              <p role="status" className="mr-auto text-sm text-slate-600">
+                {remainingCorrections === 0
+                  ? "All fields are valid. Continue to return to the full form."
+                  : remainingCorrections === 1
+                    ? "1 field still needs attention."
+                    : remainingCorrections + " fields still need attention."}
+              </p>
+            )}
             {guided && repairField === null && step > 0 && <button type="button" onClick={() => goToStep(step - 1)} className={secondary}>Back</button>}
             <button type="submit" className={button + " bg-teal-800 text-white hover:bg-teal-900"}>
               {repairField !== null || (guided && !lastStep) ? "Continue" : "Submit demo application"}

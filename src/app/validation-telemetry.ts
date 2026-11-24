@@ -1,13 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export const validationMessages = {
-  required: "This field is required.",
-  invalid_email: "Enter a valid email address.",
-  invalid_income: "Enter a monthly income of zero or more.",
-  invalid_amount: "Enter a loan amount greater than zero.",
-};
-
-export type ValidationCode = keyof typeof validationMessages;
+import type { ValidationCode } from "./loan-layout";
 
 const endpoint = "ws://127.0.0.1:3001/telemetry";
 
