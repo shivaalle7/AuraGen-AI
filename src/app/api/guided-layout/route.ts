@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { allFields, fields, parseLayout, sections, incomeMinimumHint, amountMinimumHint, type Field, type LayoutStep } from "../../loan-layout";
+import { allFields, fields, guidedFailureThreshold, parseLayout, sections, incomeMinimumHint, amountMinimumHint, type Field, type LayoutStep } from "../../loan-layout";
 
 const errorCodes: Partial<Record<Field, string>> = {
   name: "invalid_name",
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     if (body.length > 256) return Response.json({ error: "Invalid request" }, { status: 400 });
     const event = JSON.parse(body);
     if (!event || Object.keys(event).length !== 3 || !allFields.includes(event.fieldId) ||
-        !Number.isSafeInteger(event.repeatCount) || event.repeatCount < 3 ||
+        !Number.isSafeInteger(event.repeatCount) || event.repeatCount < guidedFailureThreshold ||
         typeof event.errorCode !== "string" ||
         (event.errorCode !== "required" && event.errorCode !== errorCodes[event.fieldId as Field])) {
       return Response.json({ error: "Invalid request" }, { status: 400 });
