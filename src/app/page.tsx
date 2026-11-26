@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useValidationTelemetry } from "./validation-telemetry";
 
-import { allFields, fields, initialAnswers, nextCorrection, parseLayout, sectionFor, sections, validateField, validationMessages, incomeMinimumHint, amountMinimumHint, minimumMonthlyIncome, minimumLoanAmount, type Answers, type Field, type LayoutStep, type ValidationCode } from "./loan-layout";
+import { allFields, fields, guidedFailureThreshold, initialAnswers, nextCorrection, parseLayout, sectionFor, sections, validateField, validationMessages, incomeMinimumHint, amountMinimumHint, minimumMonthlyIncome, minimumLoanAmount, type Answers, type Field, type LayoutStep, type ValidationCode } from "./loan-layout";
 
 type Errors = Partial<Record<Field, ValidationCode>>;
 
@@ -17,7 +17,6 @@ const sourceLabels: Record<LayoutSource, string> = {
 };
 
 const layoutTargetMs = 2000;
-const failureThreshold = 3;
 const failureWindowMs = 30_000;
 
 const button = "rounded-lg px-4 py-2.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal-700";
@@ -50,6 +49,7 @@ export default function Home() {
     repeatCount: number;
     source: LayoutSource;
     durationMs: number;
+    fieldErrors: { field: Field; errorCode: ValidationCode }[];
   }[]>([]);
   const [preparing, setPreparing] = useState(false);
   const request = useRef<AbortController | null>(null);
@@ -64,6 +64,32 @@ export default function Home() {
   useEffect(() => {
     if (focusTarget) document.getElementById(focusTarget.id)?.focus();
   }, [focusTarget]);
+
+  function exportDiagnostics() {
+    const header = "run,field,error_code,triggered_guide,failed_attempts,source,duration_ms,within_2s_target";
+    const rows = adaptations.flatMap((run) => run.fieldErrors.map(({ field, errorCode }) => {
+      const triggeredGuide = field === run.field;
+      return [
+        run.id,
+        field,
+        errorCode,
+        triggeredGuide,
+        triggeredGuide ? run.repeatCount : "",
+        run.source,
+        run.durationMs.toFixed(2),
+        run.durationMs <= layoutTargetMs,
+      ].join(",");
+    }));
+
+    const url = URL.createObjectURL(new Blob([[header, ...rows].join("\r\n") + "\r\n"], {
+      type: "text/csv;charset=utf-8",
+    }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "auragen-adaptations.csv";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   function loadSampleApplication() {
     if (Object.values(latestAnswers.current).some(Boolean)) return;
@@ -114,7 +140,7 @@ export default function Home() {
 
     failures.current = attempt;
     sendValidationFailure(field, errorCode, attempt.count);
-    setOfferedField((current) => attempt.count >= failureThreshold ? field : current === field ? current : null);
+    setOfferedField((current) => attempt.count >= guidedFailureThreshold ? field : current === field ? current : null);
   }
 
   function cancelLayoutRequest() {
@@ -134,9 +160,13 @@ export default function Home() {
     if (offeredField === null || request.current) return;
     const fieldId = offeredField;
     const errorCode = validateField(fieldId, answers);
-    const repeatCount = failures.current?.count ?? failureThreshold;
+    const repeatCount = failures.current?.count ?? guidedFailureThreshold;
     if (!errorCode) return;
 
+    const fieldErrors = allFields.flatMap((field) => {
+      const code = validateField(field, answers);
+      return code ? [{ field, errorCode: code }] : [];
+    });
     const startedAt = performance.now();
     const controller = new AbortController();
     request.current = controller;
@@ -176,7 +206,7 @@ export default function Home() {
     setLayoutSource(source);
     const durationMs = performance.now() - startedAt;
     setAdaptations((previous) => [
-      { id: (previous[0]?.id ?? 0) + 1, field: fieldId, errorCode, repeatCount, source, durationMs },
+      { id: (previous[0]?.id ?? 0) + 1, field: fieldId, errorCode, repeatCount, source, durationMs, fieldErrors },
       ...previous.slice(0, 4),
     ]);
     setGuided(true);
@@ -293,7 +323,13 @@ export default function Home() {
             <summary className="cursor-pointer font-semibold text-slate-800">Adaptation diagnostics</summary>
             {adaptations.length > 0 ? (
               <>
-                <p className="mt-3 text-slate-600">Last {adaptations.length} of {adaptations[0].id} runs in this tab</p>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-slate-600">Last {adaptations.length} of {adaptations[0].id} runs in this tab</p>
+                  <button type="button" onClick={exportDiagnostics}
+                    className="rounded text-sm font-semibold text-teal-800 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2">
+                    Download CSV
+                  </button>
+                </div>
                 <ol aria-label="Recent adaptations, newest first" className="mt-2 divide-y divide-slate-200">
                   {adaptations.map((run) => (
                     <li key={run.id} className="py-3">

@@ -20,7 +20,10 @@ export function useValidationTelemetry() {
     function connect() {
       const socket = new WebSocket(endpoint);
       connection.current = socket;
-      socket.onopen = () => { delay = 1_000; };
+      socket.onopen = () => {
+        if (stopped) return;
+        delay = 1_000;
+      };
       socket.onclose = () => {
         if (stopped) return;
         retry = window.setTimeout(connect, delay);
@@ -42,4 +45,5 @@ export function useValidationTelemetry() {
     if (socket?.readyState !== WebSocket.OPEN || socket.bufferedAmount > 4_096) return;
     socket.send(JSON.stringify({ type: "validation_failure", fieldId, errorCode, repeatCount }));
   };
+
 }

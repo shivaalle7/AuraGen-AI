@@ -7,6 +7,7 @@ export const sections = [
 export type Field = (typeof sections)[number]["fields"][number];
 export type Answers = Record<Field | "otherPurpose", string>;
 
+export const guidedFailureThreshold = 2;
 export const minimumMonthlyIncome = 10_000;
 export const minimumLoanAmount = 1000;
 const inr = new Intl.NumberFormat("en-IN");
