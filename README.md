@@ -35,7 +35,7 @@ AURAGEN_OPENAI_MAX_CALLS=5
 
 Each server process allows up to five live attempts with this configuration. Failed and timed-out requests count toward the limit. AuraGen caches validated AI layouts by field and error for the lifetime of the server process. A repeat can reuse the cached guide without spending an attempt. Once the limit is reached, uncached cases use simulated layouts. The counter resets on restart or during development reloads and applies separately to each server process. Set the limit to `0` to disable paid calls.
 
-Form answers stay in the browser. The server receives the affected field ID, error code, and repeat count. The layout validator checks that every field appears exactly once.
+Form answers stay in the browser. The server receives the affected field ID, error code, and repeat count. The endpoint accepts JSON requests up to 256 bytes and rejects invalid input before calling the model. The layout validator checks that every field appears exactly once.
 
 ## Checks
 

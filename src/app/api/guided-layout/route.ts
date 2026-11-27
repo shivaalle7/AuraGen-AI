@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { readGuideBody } from "./guide-body";
 import { allFields, fields, guidedFailureThreshold, parseLayout, sections, incomeMinimumHint, amountMinimumHint, type Field, type LayoutStep } from "../../loan-layout";
 
 const errorCodes: Partial<Record<Field, string>> = {
@@ -40,12 +41,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = await request.text();
-    if (body.length > 256) return Response.json({ error: "Invalid request" }, { status: 400 });
-    const event = JSON.parse(body);
-    if (!event || Object.keys(event).length !== 3 || !allFields.includes(event.fieldId) ||
+    const body = await readGuideBody(request);
+    if (!body.ok) return Response.json({ error: body.message }, { status: body.status });
+
+    const event = body.value;
+    if (!event || typeof event !== "object" || Object.keys(event).length !== 3 ||
+        !("fieldId" in event) || typeof event.fieldId !== "string" || !allFields.includes(event.fieldId as Field) ||
+        !("repeatCount" in event) || typeof event.repeatCount !== "number" ||
         !Number.isSafeInteger(event.repeatCount) || event.repeatCount < guidedFailureThreshold ||
-        typeof event.errorCode !== "string" ||
+        !("errorCode" in event) || typeof event.errorCode !== "string" ||
         (event.errorCode !== "required" && event.errorCode !== errorCodes[event.fieldId as Field])) {
       return Response.json({ error: "Invalid request" }, { status: 400 });
     }
@@ -56,7 +60,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Demo timeout" }, { status: 504 });
     }
 
-    const fieldId: Field = event.fieldId;
+    const fieldId = event.fieldId as Field;
     const key = process.env.OPENAI_API_KEY;
     const model = process.env.AURAGEN_OPENAI_MODEL;
     const cacheKey = fieldId + ":" + event.errorCode;
