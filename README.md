@@ -21,7 +21,9 @@ For a no-cost rehearsal, open the [simulated demo](http://localhost:3000/?layout
 2. Click **Open guided section** to see the tailored step. Correct the income to ₹10,000 and click **Continue**. Correct the loan amount to ₹1,000 and click **Continue** again to return to standard view with both corrections.
 3. In development, open [the timeout demo](http://localhost:3000/?layoutDemo=timeout) and repeat the same steps to see the built-in guide open at Finances.
 
-Open **Adaptation diagnostics** to see the trigger, layout source, and elapsed time for each recent run from accepting the offer until the layout is ready. The panel compares that time with the two-second target. It keeps the five most recent runs in the browser tab. Select **Download CSV** to export those runs as diagnostic metadata. The CSV includes one row per field error present when you accept the guide, with the triggering field marked. It excludes form answers.
+Select **Use built-in guide** on the offer to open it immediately without a model call. You can also switch while generation is pending. The browser cancels the request, although a live attempt that already started still counts toward the limit.
+
+Open **Adaptation diagnostics** to see the trigger, layout source, and elapsed time for each recent run from accepting the offer until the layout is ready. The panel compares that time with the two-second target. It keeps the five most recent runs in the browser tab. Select **Download CSV** to export those runs as diagnostic metadata. The CSV includes one row per field error present when you accept the guide, with the triggering field marked. The trigger row includes the time from the first to the latest failed submission. It excludes form answers.
 
 The layout uses simulated generation by default and makes no paid calls. To run a small live test, add these settings to the Git-ignored `.env.local` file and restart Next.js.
 
