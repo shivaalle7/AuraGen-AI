@@ -7,12 +7,13 @@ import { allFields, fields, guidedFailureThreshold, initialAnswers, nextCorrecti
 
 type Errors = Partial<Record<Field, ValidationCode>>;
 
-type LayoutSource = "simulated" | "model" | "cached" | "fallback";
+type LayoutSource = "simulated" | "model" | "cached" | "built_in" | "fallback";
 
 const sourceLabels: Record<LayoutSource, string> = {
   simulated: "Simulated adaptive guide",
   model: "AI-generated guide",
   cached: "Cached AI-generated guide",
+  built_in: "Built-in guide",
   fallback: "Built-in fallback",
 };
 
@@ -33,7 +34,7 @@ export default function Home() {
   const [submitted, setSubmitted] = useState(false);
   const [offeredField, setOfferedField] = useState<Field | null>(null);
   const lastEditedField = useRef<Field | null>(null);
-  const failures = useRef<{ field: Field; count: number; startedAt: number } | null>(null);
+  const failures = useRef<{ field: Field; count: number; startedAt: number; lastFailedAt: number } | null>(null);
   const firstOfferedError = offeredField === null
     ? null
     : nextCorrection(answers) ?? offeredField;
@@ -49,6 +50,7 @@ export default function Home() {
     repeatCount: number;
     source: LayoutSource;
     durationMs: number;
+    retrySpanMs: number | null;
     fieldErrors: { field: Field; errorCode: ValidationCode }[];
   }[]>([]);
   const [preparing, setPreparing] = useState(false);
@@ -66,7 +68,7 @@ export default function Home() {
   }, [focusTarget]);
 
   function exportDiagnostics() {
-    const header = "run,field,error_code,triggered_guide,failed_attempts,source,duration_ms,within_2s_target";
+    const header = "run,field,error_code,triggered_guide,failed_attempts,retry_span_ms,source,duration_ms,within_2s_target";
     const rows = adaptations.flatMap((run) => run.fieldErrors.map(({ field, errorCode }) => {
       const triggeredGuide = field === run.field;
       return [
@@ -75,6 +77,7 @@ export default function Home() {
         errorCode,
         triggeredGuide,
         triggeredGuide ? run.repeatCount : "",
+        triggeredGuide ? run.retrySpanMs?.toFixed(2) ?? "" : "",
         run.source,
         run.durationMs.toFixed(2),
         run.durationMs <= layoutTargetMs,
@@ -132,15 +135,15 @@ export default function Home() {
   }
 
   function recordValidationFailure(field: Field, errorCode: ValidationCode) {
-    const now = Date.now();
+    const now = performance.now();
     const previous = failures.current;
     const attempt = previous?.field === field && now - previous.startedAt <= failureWindowMs
-      ? { ...previous, count: previous.count + 1 }
-      : { field, count: 1, startedAt: now };
+      ? { ...previous, count: previous.count + 1, lastFailedAt: now }
+      : { field, count: 1, startedAt: now, lastFailedAt: now };
 
     failures.current = attempt;
     sendValidationFailure(field, errorCode, attempt.count);
-    setOfferedField((current) => attempt.count >= guidedFailureThreshold ? field : current === field ? current : null);
+    setOfferedField(attempt.count >= guidedFailureThreshold ? field : null);
   }
 
   function cancelLayoutRequest() {
@@ -156,11 +159,13 @@ export default function Home() {
     failures.current = null;
   }
 
-  async function acceptOffer() {
-    if (offeredField === null || request.current) return;
+  async function acceptOffer(useBuiltIn: boolean) {
+    if (offeredField === null || (!useBuiltIn && request.current)) return;
     const fieldId = offeredField;
     const errorCode = validateField(fieldId, answers);
-    const repeatCount = failures.current?.count ?? guidedFailureThreshold;
+    const attempts = failures.current;
+    const repeatCount = attempts?.count ?? guidedFailureThreshold;
+    const retrySpanMs = attempts ? attempts.lastFailedAt - attempts.startedAt : null;
     if (!errorCode) return;
 
     const fieldErrors = allFields.flatMap((field) => {
@@ -168,36 +173,42 @@ export default function Home() {
       return code ? [{ field, errorCode: code }] : [];
     });
     const startedAt = performance.now();
-    const controller = new AbortController();
-    request.current = controller;
-    setPreparing(true);
     let layout: LayoutStep[] | null = null;
-    let source: LayoutSource = "fallback";
+    let source: LayoutSource = useBuiltIn ? "built_in" : "fallback";
 
-    try {
-      const demo = process.env.NODE_ENV === "development"
-        ? new URLSearchParams(window.location.search).get("layoutDemo")
-        : null;
-      const demoQuery = demo === "timeout" || demo === "simulated" ? "?demo=" + demo : "";
-      const response = await fetch("/api/guided-layout" + demoQuery, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fieldId, errorCode, repeatCount }),
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(demo === "timeout" ? 2500 : 10000)]),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.source === "simulated" || data.source === "model" || data.source === "cached") {
-          layout = parseLayout(data, fieldId);
-          if (layout) source = data.source;
+    if (useBuiltIn) {
+      cancelLayoutRequest();
+    } else {
+      const controller = new AbortController();
+      request.current = controller;
+      setPreparing(true);
+
+      try {
+        const demo = process.env.NODE_ENV === "development"
+          ? new URLSearchParams(window.location.search).get("layoutDemo")
+          : null;
+        const demoQuery = demo === "timeout" || demo === "simulated" ? "?demo=" + demo : "";
+        const response = await fetch("/api/guided-layout" + demoQuery, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fieldId, errorCode, repeatCount }),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(demo === "timeout" ? 2500 : 10000)]),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.source === "simulated" || data.source === "model" || data.source === "cached") {
+            layout = parseLayout(data, fieldId);
+            if (layout) source = data.source;
+          }
         }
+      } catch {
+        // The built-in guide is available when generation fails or times out.
       }
-    } catch {
-      // The built-in guide is available when generation fails or times out.
+
+      if (request.current !== controller || controller.signal.aborted) return;
+      cancelLayoutRequest();
     }
 
-    if (request.current !== controller || controller.signal.aborted) return;
-    cancelLayoutRequest();
     const firstInvalidField = nextCorrection(latestAnswers.current);
     if (!firstInvalidField) return;
     setAdaptedLayout(layout);
@@ -206,7 +217,7 @@ export default function Home() {
     setLayoutSource(source);
     const durationMs = performance.now() - startedAt;
     setAdaptations((previous) => [
-      { id: (previous[0]?.id ?? 0) + 1, field: fieldId, errorCode, repeatCount, source, durationMs, fieldErrors },
+      { id: (previous[0]?.id ?? 0) + 1, field: fieldId, errorCode, repeatCount, source, durationMs, retrySpanMs, fieldErrors },
       ...previous.slice(0, 4),
     ]);
     setGuided(true);
@@ -307,8 +318,11 @@ export default function Home() {
                 <p className="mt-1 text-sm text-slate-700">Try this section in guided mode. Your answers will carry over.</p>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" onClick={acceptOffer} disabled={preparing} className={button + " bg-teal-800 text-white hover:bg-teal-900"}>
+                <button type="button" onClick={() => acceptOffer(false)} disabled={preparing} className={button + " bg-teal-800 text-white hover:bg-teal-900"}>
                   {preparing ? "Preparing guided section…" : "Open guided section"}
+                </button>
+                <button type="button" onClick={() => acceptOffer(true)} className={secondary}>
+                  {preparing ? "Use built-in guide now" : "Use built-in guide"}
                 </button>
                 <button type="button" onClick={dismissOffer} className={secondary}>Stay in standard view</button>
               </div>
@@ -334,7 +348,9 @@ export default function Home() {
                   {adaptations.map((run) => (
                     <li key={run.id} className="py-3">
                       <h2 className="font-semibold">{fields[run.field].label}</h2>
-                      <p className="mt-1 text-slate-600">{run.repeatCount} failed attempts. {validationMessages[run.errorCode]}</p>
+                      <p className="mt-1 text-slate-600">{run.repeatCount} failed attempts
+                        {run.retrySpanMs !== null ? " over " + (run.retrySpanMs / 1000).toFixed(2) + " s" : ""}.
+                        {" "}{validationMessages[run.errorCode]}</p>
                       <p className="mt-1">
                         {sourceLabels[run.source]} · {(run.durationMs / 1000).toFixed(2)} s · {run.durationMs <= layoutTargetMs ? "within" : "over"} 2 s target
                       </p>
